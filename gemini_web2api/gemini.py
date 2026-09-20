@@ -294,10 +294,6 @@ def generate_image(prompt: str, width: int = None, height: int = None) -> str:
     img_width = width or CONFIG.get("image_width", 1024)
     img_height = height or CONFIG.get("image_height", 1024)
     
-    if not HAS_HTTPX:
-        raise RuntimeError("httpx is required for image generation")
-    
-    client = _get_httpx_client()
     # Ensure URL is properly formatted without leading/trailing slashes
     api_url = f"https://api-inference.huggingface.co/models/{model}"
     
@@ -315,24 +311,43 @@ def generate_image(prompt: str, width: int = None, height: int = None) -> str:
     }
     
     log(f"Generating image with model: {model}, size: {img_width}x{img_height}")
+    log(f"API URL: {api_url}")
     
-    try:
-        response = client.post(api_url, json=payload, headers=headers, timeout=60)
-        response.raise_for_status()
-        
-        # Get image bytes
-        image_bytes = response.content
-        
-        # Convert to base64
-        base64_string = base64.b64encode(image_bytes).decode('utf-8')
-        
-        log(f"Image generated successfully: {len(image_bytes)} bytes")
-        return base64_string
-        
-    except httpx.HTTPStatusError as e:
-        error_detail = e.response.text
-        log(f"HF API error: {e.response.status_code} - {error_detail}")
-        raise RuntimeError(f"Hugging Face API error: {e.response.status_code}") from e
-    except Exception as e:
-        log(f"Image generation error: {e}")
-        raise RuntimeError(f"Image generation failed: {e}") from e
+    # Use urllib for better compatibility
+    body = json.dumps(payload).encode('utf-8')
+    ctx = _get_ssl_ctx()
+    proxy = CONFIG.get("proxy")
+    
+    last_err = None
+    for attempt in range(CONFIG["retry_attempts"]):
+        try:
+            req = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
+            if proxy:
+                opener = urllib.request.build_opener(
+                    urllib.request.ProxyHandler({"http": proxy, "https": proxy}),
+                    urllib.request.HTTPSHandler(context=ctx)
+                )
+                resp = opener.open(req, timeout=CONFIG["request_timeout_sec"])
+            else:
+                resp = urllib.request.urlopen(req, context=ctx, timeout=CONFIG["request_timeout_sec"])
+            
+            # Get image bytes
+            image_bytes = resp.read()
+            
+            # Convert to base64
+            base64_string = base64.b64encode(image_bytes).decode('utf-8')
+            
+            log(f"Image generated successfully: {len(image_bytes)} bytes")
+            return base64_string
+            
+        except urllib.error.HTTPError as e:
+            error_detail = e.read().decode('utf-8', errors='replace')
+            log(f"HF API HTTP error: {e.code} - {error_detail}")
+            raise RuntimeError(f"Hugging Face API error: {e.code}") from e
+        except Exception as e:
+            last_err = e
+            if attempt < CONFIG["retry_attempts"] - 1:
+                log(f"Image generation retry {attempt+1}/{CONFIG['retry_attempts']}: {e}")
+                time.sleep(CONFIG["retry_delay_sec"])
+    
+    raise RuntimeError(f"Image generation failed: {last_err}")
