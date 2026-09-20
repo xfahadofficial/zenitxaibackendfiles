@@ -34,13 +34,13 @@ def load_config(path: str = None):
     
     # Override with environment variables for Hugging Face settings
     if os.getenv("HF_TOKEN"):
-        CONFIG["hf_token"] = os.getenv("HF_TOKEN")
+        CONFIG["hf_token"] = os.getenv("HF_TOKEN").strip()
     if os.getenv("HF_IMAGE_MODEL"):
-        CONFIG["hf_image_model"] = os.getenv("HF_IMAGE_MODEL")
+        CONFIG["hf_image_model"] = os.getenv("HF_IMAGE_MODEL").strip().strip('"').strip("'")
     if os.getenv("IMAGE_WIDTH"):
-        CONFIG["image_width"] = int(os.getenv("IMAGE_WIDTH"))
+        CONFIG["image_width"] = int(os.getenv("IMAGE_WIDTH").strip())
     if os.getenv("IMAGE_HEIGHT"):
-        CONFIG["image_height"] = int(os.getenv("IMAGE_HEIGHT"))
+        CONFIG["image_height"] = int(os.getenv("IMAGE_HEIGHT").strip())
     
     return CONFIG
 

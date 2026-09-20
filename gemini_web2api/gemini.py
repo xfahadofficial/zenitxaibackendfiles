@@ -288,6 +288,9 @@ def generate_image(prompt: str, width: int = None, height: int = None) -> str:
         raise RuntimeError("HF_TOKEN not configured")
     
     model = CONFIG.get("hf_image_model", "black-forest-labs/FLUX.1-schnell")
+    # Strip any extra whitespace or quotes from model name
+    model = str(model).strip().strip('"').strip("'")
+    
     img_width = width or CONFIG.get("image_width", 1024)
     img_height = height or CONFIG.get("image_height", 1024)
     
@@ -295,6 +298,7 @@ def generate_image(prompt: str, width: int = None, height: int = None) -> str:
         raise RuntimeError("httpx is required for image generation")
     
     client = _get_httpx_client()
+    # Ensure URL is properly formatted without leading/trailing slashes
     api_url = f"https://api-inference.huggingface.co/models/{model}"
     
     headers = {
@@ -309,6 +313,8 @@ def generate_image(prompt: str, width: int = None, height: int = None) -> str:
             "height": img_height,
         }
     }
+    
+    log(f"Generating image with model: {model}, size: {img_width}x{img_height}")
     
     try:
         response = client.post(api_url, json=payload, headers=headers, timeout=60)
