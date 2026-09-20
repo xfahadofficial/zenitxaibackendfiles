@@ -294,12 +294,8 @@ def generate_image(prompt: str, width: int = None, height: int = None) -> str:
     img_width = width or CONFIG.get("image_width", 1024)
     img_height = height or CONFIG.get("image_height", 1024)
     
-    # Use IP address directly to avoid DNS issues
-    # api-inference.huggingface.co resolves to multiple IPs
-    api_hosts = [
-        "https://api-inference.huggingface.co",
-        "https://huggingface.co",
-    ]
+    # Use the standard Hugging Face API endpoint
+    api_url = f"https://api-inference.huggingface.co/models/{model}"
     
     headers = {
         "Authorization": f"Bearer {hf_token}",
@@ -315,17 +311,56 @@ def generate_image(prompt: str, width: int = None, height: int = None) -> str:
     }
     
     log(f"Generating image with model: {model}, size: {img_width}x{img_height}")
+    log(f"API URL: {api_url}")
     
-    for api_host in api_hosts:
-        api_url = f"{api_host}/models/{model}"
-        log(f"Trying API URL: {api_url}")
-        
-        # Try using requests library first (most reliable)
+    # Use socket to set custom DNS if needed
+    import socket
+    import os
+    
+    # Try to resolve the hostname first
+    try:
+        ip_address = socket.gethostbyname("api-inference.huggingface.co")
+        log(f"Resolved api-inference.huggingface.co to: {ip_address}")
+    except socket.gaierror as e:
+        log(f"DNS resolution failed: {e}")
+        # Try with Google DNS as fallback
         try:
-            import requests
-            import urllib3
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            response = requests.post(api_url, json=payload, headers=headers, timeout=60, verify=False)
+            # This is a workaround for Railway DNS issues
+            # We'll use a direct IP if possible
+            log("Trying to use alternative endpoint")
+            api_url = f"https://huggingface.co/api/models/{model}"
+            log(f"Alternative API URL: {api_url}")
+        except Exception as dns_err:
+            log(f"Alternative endpoint setup failed: {dns_err}")
+    
+    # Try using requests library first (most reliable)
+    try:
+        import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        response = requests.post(api_url, json=payload, headers=headers, timeout=60, verify=False)
+        response.raise_for_status()
+        
+        # Get image bytes
+        image_bytes = response.content
+        
+        # Convert to base64
+        base64_string = base64.b64encode(image_bytes).decode('utf-8')
+        
+        log(f"Image generated successfully: {len(image_bytes)} bytes")
+        return base64_string
+        
+    except ImportError:
+        log("requests not available, trying httpx")
+    except Exception as e:
+        log(f"requests failed: {e}")
+    
+    # Fallback to httpx
+    if HAS_HTTPX:
+        try:
+            import httpx
+            client = httpx.Client(verify=False, timeout=60)
+            response = client.post(api_url, json=payload, headers=headers)
             response.raise_for_status()
             
             # Get image bytes
@@ -337,48 +372,24 @@ def generate_image(prompt: str, width: int = None, height: int = None) -> str:
             log(f"Image generated successfully: {len(image_bytes)} bytes")
             return base64_string
             
-        except ImportError:
-            log("requests not available, trying httpx")
         except Exception as e:
-            log(f"requests failed for {api_host}: {e}")
-        
-        # Fallback to httpx
-        if HAS_HTTPX:
-            try:
-                import httpx
-                client = httpx.Client(verify=False, timeout=60)
-                response = client.post(api_url, json=payload, headers=headers)
-                response.raise_for_status()
-                
-                # Get image bytes
-                image_bytes = response.content
-                
-                # Convert to base64
-                base64_string = base64.b64encode(image_bytes).decode('utf-8')
-                
-                log(f"Image generated successfully: {len(image_bytes)} bytes")
-                return base64_string
-                
-            except Exception as e:
-                log(f"httpx failed for {api_host}: {e}")
-        
-        # Final fallback to urllib with SSL verification disabled
-        try:
-            body = json.dumps(payload).encode('utf-8')
-            req = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
-            ctx = ssl._create_unverified_context()
-            resp = urllib.request.urlopen(req, context=ctx, timeout=CONFIG["request_timeout_sec"])
-            
-            # Get image bytes
-            image_bytes = resp.read()
-            
-            # Convert to base64
-            base64_string = base64.b64encode(image_bytes).decode('utf-8')
-            
-            log(f"Image generated successfully: {len(image_bytes)} bytes")
-            return base64_string
-            
-        except Exception as e:
-            log(f"urllib failed for {api_host}: {e}")
+            log(f"httpx failed: {e}")
     
-    raise RuntimeError("Image generation failed: All HTTP methods failed")
+    # Final fallback to urllib with SSL verification disabled
+    try:
+        body = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(api_url, data=body, headers=headers, method="POST")
+        ctx = ssl._create_unverified_context()
+        resp = urllib.request.urlopen(req, context=ctx, timeout=CONFIG["request_timeout_sec"])
+        
+        # Get image bytes
+        image_bytes = resp.read()
+        
+        # Convert to base64
+        base64_string = base64.b64encode(image_bytes).decode('utf-8')
+        
+        log(f"Image generated successfully: {len(image_bytes)} bytes")
+        return base64_string
+        
+    except Exception as e:
+        raise RuntimeError(f"Image generation failed: {e}")
