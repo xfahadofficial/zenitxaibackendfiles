@@ -8,7 +8,7 @@ from socketserver import ThreadingMixIn
 
 from .config import CONFIG
 from .models import MODELS, resolve_model
-from .gemini import generate, generate_stream, log
+from .gemini import generate, generate_stream, log, generate_image
 from .tools import messages_to_prompt, parse_tool_calls, google_contents_to_prompt, parse_google_function_calls
 from .multimodal import detect_image_mime, fetch_image_bytes, upload_image
 from . import __version__
@@ -156,6 +156,8 @@ class GeminiHandler(BaseHTTPRequestHandler):
                 self._handle_chat(body)
             elif self.path == "/v1/responses":
                 self._handle_responses(body)
+            elif self.path == "/v1/images/generations":
+                self._handle_image_generation(body)
             elif ":streamGenerateContent" in self.path:
                 self._handle_google_generate(body, stream=True)
             elif ":generateContent" in self.path:
@@ -260,6 +262,56 @@ class GeminiHandler(BaseHTTPRequestHandler):
                 "usage": {"prompt_tokens": len(prompt)//4, "completion_tokens": len(text or "")//4,
                           "total_tokens": (len(prompt)+len(text or ""))//4},
             })
+
+    # ─── /v1/images/generations ────────────────────────────────────────────────
+
+    def _handle_image_generation(self, body: bytes):
+        req = self._parse_body(body)
+        if req is None:
+            self.send_json({"error": {"message": "invalid JSON"}}, 400)
+            return
+        
+        prompt = req.get("prompt")
+        if not prompt:
+            self.send_json({"error": {"message": "prompt is required"}}, 400)
+            return
+        
+        # Get optional size parameters
+        size = req.get("size", "1024x1024")
+        try:
+            width, height = map(int, size.lower().split("x"))
+        except (ValueError, AttributeError):
+            width = CONFIG.get("image_width", 1024)
+            height = CONFIG.get("image_height", 1024)
+        
+        # Override with explicit width/height if provided
+        if req.get("width"):
+            width = req.get("width")
+        if req.get("height"):
+            height = req.get("height")
+        
+        n = req.get("n", 1)  # Number of images (we'll generate 1 for now)
+        
+        try:
+            base64_image = generate_image(prompt, width, height)
+        except RuntimeError as e:
+            self.send_json({"error": {"message": str(e)}}, 502)
+            return
+        
+        # Format response in OpenAI-compatible format
+        iid = f"img_{uuid.uuid4().hex[:12]}"
+        response = {
+            "created": int(time.time()),
+            "data": [
+                {
+                    "url": f"data:image/png;base64,{base64_image}",
+                    "b64_json": base64_image,
+                    "revised_prompt": prompt
+                }
+            ]
+        }
+        
+        self.send_json(response)
 
     # ─── /v1/responses (Codex CLI) ───────────────────────────────────────────
 

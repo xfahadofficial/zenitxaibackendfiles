@@ -8,6 +8,7 @@ import urllib.parse
 import ssl
 import os
 import hashlib
+import base64
 
 try:
     import httpx
@@ -278,3 +279,54 @@ def generate_stream(prompt: str, model_id: int, think_mode: int, file_refs: list
                 log(f"Stream retry {attempt+1}/{CONFIG['retry_attempts']}: {e}")
                 time.sleep(CONFIG["retry_delay_sec"])
     raise last_err
+
+
+def generate_image(prompt: str, width: int = None, height: int = None) -> str:
+    """Generate image using Hugging Face Inference API and return base64 encoded string."""
+    hf_token = CONFIG.get("hf_token")
+    if not hf_token:
+        raise RuntimeError("HF_TOKEN not configured")
+    
+    model = CONFIG.get("hf_image_model", "black-forest-labs/FLUX.1-schnell")
+    img_width = width or CONFIG.get("image_width", 1024)
+    img_height = height or CONFIG.get("image_height", 1024)
+    
+    if not HAS_HTTPX:
+        raise RuntimeError("httpx is required for image generation")
+    
+    client = _get_httpx_client()
+    api_url = f"https://api-inference.huggingface.co/models/{model}"
+    
+    headers = {
+        "Authorization": f"Bearer {hf_token}",
+        "Content-Type": "application/json",
+    }
+    
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "width": img_width,
+            "height": img_height,
+        }
+    }
+    
+    try:
+        response = client.post(api_url, json=payload, headers=headers, timeout=60)
+        response.raise_for_status()
+        
+        # Get image bytes
+        image_bytes = response.content
+        
+        # Convert to base64
+        base64_string = base64.b64encode(image_bytes).decode('utf-8')
+        
+        log(f"Image generated successfully: {len(image_bytes)} bytes")
+        return base64_string
+        
+    except httpx.HTTPStatusError as e:
+        error_detail = e.response.text
+        log(f"HF API error: {e.response.status_code} - {error_detail}")
+        raise RuntimeError(f"Hugging Face API error: {e.response.status_code}") from e
+    except Exception as e:
+        log(f"Image generation error: {e}")
+        raise RuntimeError(f"Image generation failed: {e}") from e

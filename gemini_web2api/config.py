@@ -17,16 +17,31 @@ DEFAULT_CONFIG = {
     "proxy": None,
     "api_keys": [],
     "temporary_chats": False,
+    "hf_token": None,
+    "hf_image_model": "black-forest-labs/FLUX.1-schnell",
+    "image_width": 1024,
+    "image_height": 1024,
 }
 
 CONFIG = dict(DEFAULT_CONFIG)
 
 
 def load_config(path: str = None):
-    """Load config from JSON file."""
+    """Load config from JSON file and environment variables."""
     if path and os.path.exists(path):
         with open(path) as f:
             CONFIG.update(json.load(f))
+    
+    # Override with environment variables for Hugging Face settings
+    if os.getenv("HF_TOKEN"):
+        CONFIG["hf_token"] = os.getenv("HF_TOKEN")
+    if os.getenv("HF_IMAGE_MODEL"):
+        CONFIG["hf_image_model"] = os.getenv("HF_IMAGE_MODEL")
+    if os.getenv("IMAGE_WIDTH"):
+        CONFIG["image_width"] = int(os.getenv("IMAGE_WIDTH"))
+    if os.getenv("IMAGE_HEIGHT"):
+        CONFIG["image_height"] = int(os.getenv("IMAGE_HEIGHT"))
+    
     return CONFIG
 
 
